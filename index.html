@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebSnap — Full-Page Screenshot Tool</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: #07070f;
+      background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(120,80,255,.14) 0%, transparent 65%);
+    }
+    .bg-grid {
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 44px 44px;
+    }
+    .card { background: rgba(255,255,255,.028); border: 1px solid rgba(255,255,255,.08); }
+
+    /* Inputs */
+    .url-input, .num-input, .bulk-input {
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.09);
+      color: white;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .url-input::placeholder,
+    .bulk-input::placeholder { color: rgba(255,255,255,.2); }
+    .num-input { color: rgba(255,255,255,.8); text-align: center; }
+    .url-input:focus, .num-input:focus, .bulk-input:focus {
+      outline: none;
+      border-color: rgba(139,92,246,.55);
+      box-shadow: 0 0 0 3px rgba(139,92,246,.1);
+    }
+
+    /* Mode tabs */
+    .mode-tab {
+      padding: 6px 18px; border-radius: 8px;
+      font-size: .78rem; font-weight: 600; letter-spacing: .03em;
+      transition: background .18s, color .18s;
+      color: rgba(255,255,255,.35);
+    }
+    .mode-tab.active {
+      background: rgba(139,92,246,.18);
+      color: rgba(255,255,255,.9);
+    }
+
+    /* Format pills */
+    .fmt-pill {
+      padding: 5px 14px; border-radius: 8px; font-size: .75rem; font-weight: 600;
+      border: 1px solid rgba(255,255,255,.1);
+      color: rgba(255,255,255,.4);
+      cursor: pointer; transition: all .15s;
+      user-select: none;
+    }
+    .fmt-pill:hover  { border-color: rgba(139,92,246,.4); color: rgba(255,255,255,.7); }
+    .fmt-pill.active {
+      background: rgba(139,92,246,.2);
+      border-color: rgba(139,92,246,.5);
+      color: rgba(255,255,255,.95);
+    }
+
+    /* Buttons */
+    .btn-capture {
+      background: linear-gradient(135deg,#7c3aed,#4f46e5);
+      transition: opacity .18s, transform .12s, box-shadow .18s;
+      box-shadow: 0 4px 20px rgba(124,58,237,.3);
+    }
+    .btn-capture:hover:not(:disabled) { opacity:.88; transform:translateY(-1px); box-shadow:0 6px 28px rgba(124,58,237,.4); }
+    .btn-capture:active:not(:disabled) { transform:translateY(0); }
+    .btn-capture:disabled { opacity:.4; cursor:not-allowed; }
+
+    .btn-download {
+      background: linear-gradient(135deg,#059669,#0d9488);
+      transition: opacity .18s, transform .12s, box-shadow .18s;
+      box-shadow: 0 4px 20px rgba(5,150,105,.28);
+    }
+    .btn-download:hover  { opacity:.88; transform:translateY(-1px); }
+    .btn-download:active { transform:translateY(0); }
+
+    .btn-zip {
+      background: linear-gradient(135deg,#2563eb,#7c3aed);
+      box-shadow: 0 4px 20px rgba(37,99,235,.28);
+      transition: opacity .18s, transform .12s;
+    }
+    .btn-zip:hover  { opacity:.88; transform:translateY(-1px); }
+
+    .btn-ghost { color:rgba(255,255,255,.3); transition:color .2s; }
+    .btn-ghost:hover { color:rgba(255,255,255,.7); }
+
+    /* Spinner */
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .spinner {
+      border: 2px solid rgba(255,255,255,.15);
+      border-top-color: rgba(255,255,255,.8);
+      border-radius: 50%; animation: spin .65s linear infinite; flex-shrink: 0;
+    }
+
+    /* Step pulse */
+    @keyframes pulse-ring { 0%,100%{transform:scale(.85);opacity:.35} 50%{transform:scale(1.15);opacity:1} }
+    .dot-active { animation: pulse-ring 1.4s ease-in-out infinite; }
+
+    /* Fade-up */
+    @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    .fade-up { animation: fadeUp .32s ease forwards; }
+
+    /* Sections */
+    .section { display:none; }
+    .section.active { display:block; }
+
+    /* Misc */
+    .stat-box  { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); }
+    .divider   { border-color:rgba(255,255,255,.06); }
+    .step-row  { transition:opacity .3s; }
+
+    /* Resize collapse */
+    .collapse-body { display:none; }
+    .collapse-body.open { display:block; }
+    .collapse-arrow { transition:transform .2s; }
+    .collapse-arrow.open { transform:rotate(90deg); }
+
+    /* Bulk URL list */
+    .bulk-url-row {
+      display:flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:8px;
+      background:rgba(255,255,255,.025); border:1px solid rgba(255,255,255,.06);
+    }
+
+    /* Scrollable result list */
+    .result-scroll { max-height:180px; overflow-y:auto; }
+    .result-scroll::-webkit-scrollbar { width:4px; }
+    .result-scroll::-webkit-scrollbar-track { background:transparent; }
+    .result-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,.1); border-radius:2px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col text-white">
+
+  <div class="fixed inset-0 bg-grid pointer-events-none" aria-hidden="true"></div>
+
+  <main class="relative flex-1 flex flex-col items-center justify-center px-4 py-16">
+
+    <!-- Header -->
+    <div class="text-center mb-10">
+      <div class="inline-flex items-center justify-center w-[52px] h-[52px] rounded-[14px] mb-5"
+           style="background:linear-gradient(135deg,rgba(124,58,237,.18),rgba(79,70,229,.18));
+                  border:1px solid rgba(139,92,246,.28);">
+        <svg class="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </div>
+      <h1 class="text-[2.25rem] font-bold tracking-tight leading-none mb-2"
+          style="background:linear-gradient(160deg,#fff 30%,rgba(255,255,255,.45));
+                 -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">
+        WebSnap
+      </h1>
+      <p class="text-[0.9rem] text-gray-400">Capture any website as a full-page screenshot — no matter how long.</p>
+    </div>
+
+    <!-- Card -->
+    <div class="card rounded-2xl p-8 w-full max-w-[520px]">
+
+      <!-- ─── INPUT SECTION ─── -->
+      <div id="sec-input" class="section active">
+
+        <!-- Mode tabs -->
+        <div class="flex gap-1 mb-6 p-1 rounded-xl" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);">
+          <button class="mode-tab active flex-1" id="tab-single" onclick="setMode('single')">Single URL</button>
+          <button class="mode-tab flex-1"        id="tab-bulk"   onclick="setMode('bulk')">Bulk</button>
+        </div>
+
+        <!-- Single URL input -->
+        <div id="single-input">
+          <label class="block text-[0.78rem] font-medium text-gray-500 uppercase tracking-wider mb-2">
+            Website URL
+          </label>
+          <div class="relative">
+            <span class="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+              <svg class="w-4 h-4 text-gray-600" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/>
+              </svg>
+            </span>
+            <input type="url" id="url-input" placeholder="https://example.com"
+                   autocomplete="off" spellcheck="false"
+                   class="url-input w-full rounded-xl pl-10 pr-4 py-3 text-sm" />
+          </div>
+        </div>
+
+        <!-- Bulk URLs textarea -->
+        <div id="bulk-input-wrap" class="hidden">
+          <label class="block text-[0.78rem] font-medium text-gray-500 uppercase tracking-wider mb-2">
+            Website URLs <span class="text-gray-700 normal-case tracking-normal font-normal">— one per line</span>
+          </label>
+          <textarea id="bulk-urls" rows="4" placeholder="https://example.com&#10;https://github.com&#10;https://news.ycombinator.com"
+                    class="bulk-input w-full rounded-xl px-4 py-3 text-sm resize-none"></textarea>
+        </div>
+
+        <!-- Format selector -->
+        <div class="mt-5">
+          <p class="text-[0.78rem] font-medium text-gray-500 uppercase tracking-wider mb-2">Output Format</p>
+          <div class="flex gap-2 flex-wrap">
+            <button class="fmt-pill active" data-fmt="png"  onclick="setFormat('png')">PNG</button>
+            <button class="fmt-pill"        data-fmt="jpg"  onclick="setFormat('jpg')">JPG</button>
+            <button class="fmt-pill"        data-fmt="gif"  onclick="setFormat('gif')">GIF</button>
+            <button class="fmt-pill"        data-fmt="svg"  onclick="setFormat('svg')">SVG</button>
+          </div>
+          <p class="text-[0.68rem] text-gray-700 mt-1.5">
+            PNG lossless · JPG smaller file · GIF 256-colour · SVG embeds raster in vector wrapper
+          </p>
+        </div>
+
+        <!-- Resize (collapsible) -->
+        <div class="mt-5">
+          <button onclick="toggleResize()"
+                  class="flex items-center gap-2 text-[0.78rem] font-medium text-gray-500 uppercase tracking-wider hover:text-gray-300 transition-colors">
+            <svg id="resize-arrow" class="collapse-arrow w-3 h-3" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+            Resize (optional)
+          </button>
+
+          <div id="resize-body" class="collapse-body mt-3">
+            <div class="flex items-center gap-3">
+              <div class="flex-1">
+                <label class="block text-[0.7rem] text-gray-600 mb-1">Width (px)</label>
+                <input type="number" id="resize-w" min="1" max="8000" placeholder="e.g. 1280"
+                       class="num-input w-full rounded-xl px-3 py-2.5 text-sm" />
+              </div>
+              <span class="text-gray-700 mt-5 text-lg">×</span>
+              <div class="flex-1">
+                <label class="block text-[0.7rem] text-gray-600 mb-1">Height (px)</label>
+                <input type="number" id="resize-h" min="1" max="80000" placeholder="auto"
+                       class="num-input w-full rounded-xl px-3 py-2.5 text-sm" />
+              </div>
+            </div>
+            <p class="text-[0.68rem] text-gray-700 mt-2">
+              Leave one field blank to preserve aspect ratio. Fill both to force exact dimensions.
+            </p>
+          </div>
+        </div>
+
+        <!-- Capture button -->
+        <button id="btn-capture" onclick="startCapture()"
+                class="btn-capture w-full mt-6 py-3 rounded-xl font-semibold text-sm
+                       flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+            <circle cx="12" cy="13" r="4"/>
+          </svg>
+          <span id="btn-capture-label">Capture Screenshot</span>
+        </button>
+
+        <!-- Error box -->
+        <div id="error-box" class="hidden mt-4 px-4 py-3 rounded-xl fade-up"
+             style="background:rgba(239,68,68,.09);border:1px solid rgba(239,68,68,.22);">
+          <div class="flex items-start gap-2.5">
+            <svg class="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>
+            </svg>
+            <p id="error-text" class="text-red-300 text-xs leading-relaxed"></p>
+          </div>
+        </div>
+
+      </div><!-- /sec-input -->
+
+
+      <!-- ─── SINGLE LOADING ─── -->
+      <div id="sec-loading" class="section">
+        <p class="text-[0.78rem] font-medium text-gray-500 uppercase tracking-wider mb-5">In progress</p>
+        <div class="space-y-4">
+
+          <div class="step-row flex items-center gap-3" id="step-1">
+            <div id="step-1-icon" class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                 style="background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.25);">
+              <span class="dot-active w-2 h-2 rounded-full bg-violet-400 block"></span>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-white">Navigating to page</p>
+              <p class="text-xs text-gray-500 truncate" id="step-1-url"></p>
+            </div>
+            <div class="spinner w-[18px] h-[18px]" id="step-1-spin"></div>
+            <svg id="step-1-check" class="hidden w-5 h-5 text-emerald-400 flex-shrink-0"
+                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+
+          <div class="step-row flex items-center gap-3 opacity-40" id="step-2">
+            <div id="step-2-icon" class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                 style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);">
+              <span class="w-2 h-2 rounded-full bg-gray-600 block"></span>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm font-medium text-gray-300">Scrolling through content</p>
+              <p class="text-xs text-gray-600">Triggering lazy-loaded elements…</p>
+            </div>
+            <div class="spinner w-[18px] h-[18px] hidden" id="step-2-spin"></div>
+            <svg id="step-2-check" class="hidden w-5 h-5 text-emerald-400 flex-shrink-0"
+                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+
+          <div class="step-row flex items-center gap-3 opacity-40" id="step-3">
+            <div id="step-3-icon" class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                 style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);">
+              <span class="w-2 h-2 rounded-full bg-gray-600 block"></span>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm font-medium text-gray-300">Capturing &amp; converting</p>
+              <p class="text-xs text-gray-600" id="step-3-sub">Taking full-page snapshot…</p>
+            </div>
+            <div class="spinner w-[18px] h-[18px] hidden" id="step-3-spin"></div>
+            <svg id="step-3-check" class="hidden w-5 h-5 text-emerald-400 flex-shrink-0"
+                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+
+        </div>
+        <button onclick="cancelCapture()" class="btn-ghost w-full mt-7 py-2 text-xs font-medium">Cancel</button>
+      </div><!-- /sec-loading -->
+
+
+      <!-- ─── BULK LOADING ─── -->
+      <div id="sec-bulk-loading" class="section">
+        <div class="flex items-center justify-between mb-4">
+          <p class="text-[0.78rem] font-medium text-gray-500 uppercase tracking-wider">Capturing</p>
+          <p id="bulk-prog-text" class="text-xs text-gray-400 tabular-nums">0 / 0</p>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="h-1 rounded-full mb-5" style="background:rgba(255,255,255,.06);">
+          <div id="bulk-prog-bar" class="h-1 rounded-full transition-all"
+               style="background:linear-gradient(90deg,#7c3aed,#4f46e5);width:0%;"></div>
+        </div>
+
+        <!-- URL rows -->
+        <div id="bulk-url-rows" class="space-y-2 result-scroll"></div>
+
+        <button onclick="cancelCapture()" class="btn-ghost w-full mt-6 py-2 text-xs font-medium">Cancel</button>
+      </div><!-- /sec-bulk-loading -->
+
+
+      <!-- ─── SINGLE SUCCESS ─── -->
+      <div id="sec-success" class="section fade-up">
+
+        <div class="flex items-center gap-3 mb-6 pb-6 border-b divider">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+               style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.28);">
+            <svg class="w-5 h-5 text-emerald-400" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 13l4 4L19 7"/>
+            </svg>
+          </div>
+          <div>
+            <p class="text-sm font-semibold text-white">Screenshot ready</p>
+            <p class="text-xs text-gray-500 mt-0.5">Your download is waiting below</p>
+          </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="grid grid-cols-4 gap-2 mb-6">
+          <div class="stat-box rounded-xl p-3 text-center">
+            <p class="text-[1rem] font-bold text-white tabular-nums" id="meta-w">—</p>
+            <p class="text-[0.65rem] text-gray-500 mt-0.5 uppercase tracking-wide">W</p>
+          </div>
+          <div class="stat-box rounded-xl p-3 text-center">
+            <p class="text-[1rem] font-bold text-white tabular-nums" id="meta-h">—</p>
+            <p class="text-[0.65rem] text-gray-500 mt-0.5 uppercase tracking-wide">H</p>
+          </div>
+          <div class="stat-box rounded-xl p-3 text-center">
+            <p class="text-[1rem] font-bold text-white tabular-nums" id="meta-s">—</p>
+            <p class="text-[0.65rem] text-gray-500 mt-0.5 uppercase tracking-wide">Size</p>
+          </div>
+          <div class="stat-box rounded-xl p-3 text-center">
+            <p class="text-[1rem] font-bold text-violet-400 uppercase tabular-nums" id="meta-fmt">PNG</p>
+            <p class="text-[0.65rem] text-gray-500 mt-0.5 uppercase tracking-wide">Format</p>
+          </div>
+        </div>
+
+        <a id="dl-link" href="#" download class="block">
+          <button class="btn-download w-full py-3 rounded-xl font-semibold text-sm
+                         flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download Screenshot
+          </button>
+        </a>
+
+        <button onclick="reset()" class="btn-ghost w-full mt-3 py-2.5 text-sm flex items-center justify-center gap-1.5">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          Capture another website
+        </button>
+
+      </div><!-- /sec-success -->
+
+
+      <!-- ─── BULK SUCCESS ─── -->
+      <div id="sec-bulk-success" class="section fade-up">
+
+        <div class="flex items-center gap-3 mb-5 pb-5 border-b divider">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+               style="background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.28);">
+            <svg class="w-5 h-5 text-emerald-400" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 13l4 4L19 7"/>
+            </svg>
+          </div>
+          <div>
+            <p class="text-sm font-semibold text-white" id="bulk-done-title">Screenshots ready</p>
+            <p class="text-xs text-gray-500 mt-0.5" id="bulk-done-sub"></p>
+          </div>
+        </div>
+
+        <!-- Individual download list -->
+        <div id="bulk-result-list" class="space-y-2 result-scroll mb-5"></div>
+
+        <!-- ZIP download -->
+        <a id="zip-link" href="#" class="block">
+          <button class="btn-zip w-full py-3 rounded-xl font-semibold text-sm
+                         flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download All as ZIP
+          </button>
+        </a>
+
+        <button onclick="reset()" class="btn-ghost w-full mt-3 py-2.5 text-sm flex items-center justify-center gap-1.5">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          Capture more websites
+        </button>
+
+      </div><!-- /sec-bulk-success -->
+
+    </div><!-- /card -->
+
+    <!-- Feature pills -->
+    <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-8">
+      <span class="flex items-center gap-1.5 text-gray-600 text-[0.72rem]">
+        <svg class="w-3 h-3 text-violet-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>Handles lazy-loaded content
+      </span>
+      <span class="flex items-center gap-1.5 text-gray-600 text-[0.72rem]">
+        <svg class="w-3 h-3 text-violet-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>Unlimited page height
+      </span>
+      <span class="flex items-center gap-1.5 text-gray-600 text-[0.72rem]">
+        <svg class="w-3 h-3 text-violet-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>PNG · JPG · GIF · SVG
+      </span>
+      <span class="flex items-center gap-1.5 text-gray-600 text-[0.72rem]">
+        <svg class="w-3 h-3 text-violet-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>Custom resize
+      </span>
+      <span class="flex items-center gap-1.5 text-gray-600 text-[0.72rem]">
+        <svg class="w-3 h-3 text-violet-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>Bulk capture + ZIP
+      </span>
+    </div>
+
+  </main>
+
+  <footer class="relative text-center py-5 text-[0.7rem] text-gray-700">
+    Powered by Playwright &amp; Claude
+  </footer>
+
+  <!-- ── JavaScript ── -->
+  <script>
+    // ── State ────────────────────────────────────────────────────────────────
+    let mode      = 'single'; // 'single' | 'bulk'
+    let fmt       = 'png';
+    let jobId     = null;
+    let batchId   = null;
+    let batchJobs = [];
+    let pollTimer = null;
+    let stepT1    = null;
+    let stepT2    = null;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function show(id) {
+      ['sec-input','sec-loading','sec-bulk-loading','sec-success','sec-bulk-success']
+        .forEach(s => {
+          const el = document.getElementById(s);
+          el.classList.remove('active','fade-up');
+        });
+      const t = document.getElementById(id);
+      t.classList.add('active');
+      if (id !== 'sec-input') t.classList.add('fade-up');
+    }
+
+    function fmtBytes(b) {
+      if (!b) return '—';
+      if (b < 1024)    return b + ' B';
+      if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+      return (b/1048576).toFixed(1) + ' MB';
+    }
+
+    function setError(msg) {
+      const box  = document.getElementById('error-box');
+      const text = document.getElementById('error-text');
+      if (msg) { text.textContent = msg; box.classList.remove('hidden'); }
+      else       box.classList.add('hidden');
+    }
+
+    function shortHost(url) {
+      try { return new URL(url).hostname; } catch { return url; }
+    }
+
+    // ── Mode ──────────────────────────────────────────────────────────────────
+    function setMode(m) {
+      mode = m;
+      document.getElementById('tab-single').classList.toggle('active', m === 'single');
+      document.getElementById('tab-bulk').classList.toggle('active', m === 'bulk');
+      document.getElementById('single-input').classList.toggle('hidden', m !== 'single');
+      document.getElementById('bulk-input-wrap').classList.toggle('hidden', m !== 'bulk');
+      document.getElementById('btn-capture-label').textContent =
+        m === 'bulk' ? 'Capture All' : 'Capture Screenshot';
+    }
+
+    // ── Format ────────────────────────────────────────────────────────────────
+    function setFormat(f) {
+      fmt = f;
+      document.querySelectorAll('.fmt-pill').forEach(p => {
+        p.classList.toggle('active', p.dataset.fmt === f);
+      });
+    }
+
+    // ── Resize collapse ───────────────────────────────────────────────────────
+    function toggleResize() {
+      const body  = document.getElementById('resize-body');
+      const arrow = document.getElementById('resize-arrow');
+      body.classList.toggle('open');
+      arrow.classList.toggle('open');
+    }
+
+    // ── Capture ───────────────────────────────────────────────────────────────
+    async function startCapture() {
+      setError(null);
+      const rw = parseInt(document.getElementById('resize-w').value) || null;
+      const rh = parseInt(document.getElementById('resize-h').value) || null;
+
+      if (mode === 'single') {
+        const url = document.getElementById('url-input').value.trim();
+        if (!url)                              { document.getElementById('url-input').focus(); return; }
+        if (!/^https?:\/\/.+/.test(url))       { setError('Please enter a full URL starting with https:// or http://'); return; }
+        await _startSingle(url, rw, rh);
+      } else {
+        const raw  = document.getElementById('bulk-urls').value;
+        const urls = raw.split('\n').map(s => s.trim()).filter(s => /^https?:\/\/.+/.test(s));
+        if (!urls.length) { setError('Enter at least one valid URL (starting with https://).'); return; }
+        await _startBulk(urls, rw, rh);
+      }
+    }
+
+    // Single flow
+    async function _startSingle(url, rw, rh) {
+      resetSteps();
+      document.getElementById('step-1-url').textContent = url;
+      document.getElementById('step-3-sub').textContent =
+        (rw || rh) ? `Capturing & resizing to ${rw||'auto'}×${rh||'auto'}…` : 'Taking full-page snapshot…';
+      show('sec-loading');
+      animateSteps();
+      try {
+        const res  = await fetch('/capture', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ url, format: fmt, resize_width: rw, resize_height: rh }),
+        });
+        const data = await res.json();
+        jobId = data.job_id;
+        pollTimer = setInterval(() => _pollSingle(jobId), 1800);
+      } catch {
+        stopTimers(); show('sec-input');
+        setError('Could not reach the server. Make sure server.py is running.');
+      }
+    }
+
+    async function _pollSingle(id) {
+      try {
+        const res  = await fetch(`/status/${id}`);
+        const data = await res.json();
+        if (data.status === 'complete') {
+          clearInterval(pollTimer); stopTimers(); completeStep(3);
+          setTimeout(() => {
+            document.getElementById('meta-w').textContent   = data.width_px  ? data.width_px  + 'px' : '—';
+            document.getElementById('meta-h').textContent   = data.height_px ? data.height_px + 'px' : '—';
+            document.getElementById('meta-s').textContent   = fmtBytes(data.file_size_bytes);
+            document.getElementById('meta-fmt').textContent = (data.format || 'png').toUpperCase();
+            document.getElementById('dl-link').href         = `/download/${id}`;
+            document.getElementById('dl-link').download     = `screenshot.${data.format||'png'}`;
+            show('sec-success');
+          }, 700);
+        } else if (data.status === 'error') {
+          clearInterval(pollTimer); stopTimers();
+          show('sec-input'); setError(data.error || 'Capture failed.');
+        }
+      } catch { /* keep polling */ }
+    }
+
+    // Bulk flow
+    async function _startBulk(urls, rw, rh) {
+      // Build skeleton rows
+      const container = document.getElementById('bulk-url-rows');
+      container.innerHTML = '';
+      urls.forEach((url, i) => {
+        container.insertAdjacentHTML('beforeend', `
+          <div id="bulk-row-${i}" class="bulk-url-row">
+            <div class="spinner w-3.5 h-3.5 flex-shrink-0" id="bulk-spin-${i}"></div>
+            <svg id="bulk-check-${i}" class="hidden w-3.5 h-3.5 text-emerald-400 flex-shrink-0"
+                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <svg id="bulk-err-${i}" class="hidden w-3.5 h-3.5 text-red-400 flex-shrink-0"
+                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>
+            </svg>
+            <span class="text-xs text-gray-300 truncate flex-1">${shortHost(url)}</span>
+            <span id="bulk-label-${i}" class="text-[0.65rem] text-gray-600">Pending</span>
+          </div>`);
+      });
+      document.getElementById('bulk-prog-text').textContent = `0 / ${urls.length}`;
+      document.getElementById('bulk-prog-bar').style.width = '0%';
+      show('sec-bulk-loading');
+
+      try {
+        const res  = await fetch('/bulk-capture', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ urls, format: fmt, resize_width: rw, resize_height: rh }),
+        });
+        const data = await res.json();
+        batchId   = data.batch_id;
+        batchJobs = data.job_ids;
+        pollTimer = setInterval(() => _pollBulk(batchId, urls), 1800);
+      } catch {
+        show('sec-input');
+        setError('Could not reach the server. Make sure server.py is running.');
+      }
+    }
+
+    async function _pollBulk(bid, urls) {
+      try {
+        const res  = await fetch(`/status-bulk/${bid}`);
+        const data = await res.json();
+        const done = data.completed + data.errored;
+        const pct  = data.total ? Math.round(done / data.total * 100) : 0;
+        document.getElementById('bulk-prog-text').textContent = `${done} / ${data.total}`;
+        document.getElementById('bulk-prog-bar').style.width  = pct + '%';
+
+        // Update individual row statuses
+        data.job_ids.forEach((jid, i) => {
+          const job = null; // we check via individual status below lazily
+          // Mark done rows by polling per-job status in the background
+          fetch(`/status/${jid}`).then(r => r.json()).then(j => {
+            if (j.status === 'complete') {
+              document.getElementById(`bulk-spin-${i}`)?.classList.add('hidden');
+              document.getElementById(`bulk-check-${i}`)?.classList.remove('hidden');
+              if (document.getElementById(`bulk-label-${i}`))
+                document.getElementById(`bulk-label-${i}`).textContent = fmtBytes(j.file_size_bytes);
+            } else if (j.status === 'error') {
+              document.getElementById(`bulk-spin-${i}`)?.classList.add('hidden');
+              document.getElementById(`bulk-err-${i}`)?.classList.remove('hidden');
+              if (document.getElementById(`bulk-label-${i}`))
+                document.getElementById(`bulk-label-${i}`).textContent = 'Error';
+            }
+          }).catch(() => {});
+        });
+
+        if (data.status === 'complete') {
+          clearInterval(pollTimer);
+          setTimeout(() => _showBulkSuccess(bid, data, urls), 600);
+        }
+      } catch { /* keep polling */ }
+    }
+
+    async function _showBulkSuccess(bid, statusData, urls) {
+      const ok  = statusData.completed;
+      const err = statusData.errored;
+      document.getElementById('bulk-done-title').textContent =
+        `${ok} screenshot${ok !== 1 ? 's' : ''} ready`;
+      document.getElementById('bulk-done-sub').textContent =
+        err > 0 ? `${err} failed` : 'All captures completed successfully';
+
+      // Build individual download rows
+      const list = document.getElementById('bulk-result-list');
+      list.innerHTML = '';
+      for (let i = 0; i < batchJobs.length; i++) {
+        const jid  = batchJobs[i];
+        const host = shortHost(urls[i] || '');
+        let rowHtml = `<div class="bulk-url-row">
+          <span class="text-xs text-gray-400 truncate flex-1">${host}</span>`;
+        try {
+          const j = await fetch(`/status/${jid}`).then(r => r.json());
+          if (j.status === 'complete') {
+            rowHtml += `<a href="/download/${jid}" download="screenshot_${i+1}.${j.format||fmt}"
+                           class="text-[0.7rem] font-semibold text-violet-400 hover:text-violet-300 flex-shrink-0">
+                           ↓ ${(j.format||fmt).toUpperCase()}</a>`;
+          } else {
+            rowHtml += `<span class="text-[0.7rem] text-red-400 flex-shrink-0">Failed</span>`;
+          }
+        } catch {
+          rowHtml += `<span class="text-[0.7rem] text-gray-600 flex-shrink-0">—</span>`;
+        }
+        rowHtml += '</div>';
+        list.insertAdjacentHTML('beforeend', rowHtml);
+      }
+
+      document.getElementById('zip-link').href = `/download-bulk/${bid}`;
+      show('sec-bulk-success');
+    }
+
+    // ── Cancel / Reset ────────────────────────────────────────────────────────
+    function cancelCapture() {
+      clearInterval(pollTimer); stopTimers();
+      show('sec-input');
+    }
+
+    function reset() {
+      clearInterval(pollTimer); stopTimers();
+      jobId = null; batchId = null; batchJobs = [];
+      document.getElementById('url-input').value   = '';
+      document.getElementById('bulk-urls').value   = '';
+      document.getElementById('resize-w').value    = '';
+      document.getElementById('resize-h').value    = '';
+      setError(null);
+      show('sec-input');
+    }
+
+    // ── Step helpers (single mode) ────────────────────────────────────────────
+    function resetSteps() {
+      [1,2,3].forEach(n => {
+        document.getElementById(`step-${n}`).classList.add('opacity-40');
+        document.getElementById(`step-${n}-spin`).classList.add('hidden');
+        document.getElementById(`step-${n}-check`).classList.add('hidden');
+        const icon = document.getElementById(`step-${n}-icon`);
+        icon.style.background = 'rgba(255,255,255,.04)';
+        icon.style.border     = '1px solid rgba(255,255,255,.08)';
+        icon.innerHTML = '<span class="w-2 h-2 rounded-full bg-gray-600 block"></span>';
+      });
+    }
+
+    function activateStep(n) {
+      const row  = document.getElementById(`step-${n}`);
+      const icon = document.getElementById(`step-${n}-icon`);
+      const spin = document.getElementById(`step-${n}-spin`);
+      row.classList.remove('opacity-40');
+      icon.style.background = 'rgba(139,92,246,.12)';
+      icon.style.border     = '1px solid rgba(139,92,246,.25)';
+      icon.innerHTML = '<span class="dot-active w-2 h-2 rounded-full bg-violet-400 block"></span>';
+      spin.classList.remove('hidden');
+    }
+
+    function completeStep(n) {
+      const icon  = document.getElementById(`step-${n}-icon`);
+      document.getElementById(`step-${n}-spin`).classList.add('hidden');
+      document.getElementById(`step-${n}-check`).classList.remove('hidden');
+      icon.style.background = 'rgba(16,185,129,.1)';
+      icon.style.border     = '1px solid rgba(16,185,129,.25)';
+      icon.innerHTML = '';
+    }
+
+    function animateSteps() {
+      activateStep(1);
+      stepT1 = setTimeout(() => { completeStep(1); activateStep(2);
+        stepT2 = setTimeout(() => { completeStep(2); activateStep(3); }, 4500);
+      }, 3200);
+    }
+
+    function stopTimers() { clearTimeout(stepT1); clearTimeout(stepT2); }
+
+    // ── Keyboard ──────────────────────────────────────────────────────────────
+    document.getElementById('url-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') startCapture();
+    });
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,5 @@
+anthropic
+playwright
+Pillow
+fastapi
+uvicorn[standard]
