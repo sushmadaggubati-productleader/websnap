@@ -11,63 +11,43 @@ POST /bulk-capture            Start a batch of capture jobs
 GET  /status-bulk/{batch_id} Poll batch status
 GET  /download-bulk/{batch_id} Download all completed shots as ZIP
 
-GET  /auth/google            Redirect to Google OAuth
-GET  /auth/google/callback   Google OAuth callback (sets session cookie)
-GET  /auth/me                Returns current user + usage info
-POST /auth/logout            Clears session cookie
-POST /checkout/create        Stripe checkout (placeholder until keys are set)
+POST /design/{job_id}        Generate a website from a screenshot
+GET  /design-status/{id}     Poll design job status
+GET  /design-download/{id}   Download generated index.html
 
 GET  /                       Serve index.html
 
 Run
 ---
   uvicorn server:app --reload --port 8000
+
+# NOTE: Google auth + usage limits are implemented in auth.py / database.py
+# but not wired in here yet. To re-enable, see those files.
 """
 
 import io
-import os
 import uuid
 import zipfile
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-load_dotenv()  # load .env before anything else reads os.getenv
+load_dotenv()
 
-from fastapi import BackgroundTasks, Depends, FastAPI
+from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, HttpUrl
-from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy.orm import Session
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from agent import capture_screenshot, post_process_image, SCREENSHOTS_DIR
-import auth
 import design_agent
-from auth import require_auth, check_usage_limit
-from database import UsageRecord, get_db, init_db
 
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="WebSnap")
-
-# SessionMiddleware is required by authlib for storing OAuth state between
-# the /auth/google redirect and the /auth/google/callback.
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=os.getenv("SECRET_KEY", "dev-secret-please-change-in-production"),
-)
-
-# Mount auth routes (Google OAuth, /auth/me, logout, Stripe checkout)
-app.include_router(auth.router)
-
-# Create DB tables on startup
-@app.on_event("startup")
-async def startup():
-    init_db()
 
 # ---------------------------------------------------------------------------
 # In-memory job stores (replace with Redis / DB for production)
@@ -112,22 +92,9 @@ class BulkCaptureRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.post("/capture")
-async def start_capture(
-    req: CaptureRequest,
-    background_tasks: BackgroundTasks,
-    user=Depends(require_auth),
-    db: Session = Depends(get_db),
-):
-    # Enforce free-tier limit (raises HTTP 402 if exceeded)
-    check_usage_limit(1, user, db)
-
+async def start_capture(req: CaptureRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
     jobs[job_id] = {"status": "pending"}
-
-    # Record usage immediately so concurrent requests can't bypass the limit
-    db.add(UsageRecord(user_id=user.id, job_id=job_id))
-    db.commit()
-
     background_tasks.add_task(
         _run_capture, job_id, str(req.url),
         req.format, req.resize_width, req.resize_height,
@@ -135,7 +102,7 @@ async def start_capture(
     return {"job_id": job_id}
 
 
-@app.get("/status/{job_id}", dependencies=[Depends(require_auth)])
+@app.get("/status/{job_id}")
 async def get_status(job_id: str):
     job = jobs.get(job_id)
     if job is None:
@@ -143,7 +110,7 @@ async def get_status(job_id: str):
     return job
 
 
-@app.get("/download/{job_id}", dependencies=[Depends(require_auth)])
+@app.get("/download/{job_id}")
 async def download(job_id: str):
     job = jobs.get(job_id)
     if not job:
@@ -169,35 +136,23 @@ async def download(job_id: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/bulk-capture")
-async def start_bulk_capture(
-    req: BulkCaptureRequest,
-    background_tasks: BackgroundTasks,
-    user=Depends(require_auth),
-    db: Session = Depends(get_db),
-):
-    num_urls = len(req.urls)
-
-    # Enforce free-tier limit for the whole batch at once
-    check_usage_limit(num_urls, user, db)
-
+async def start_bulk_capture(req: BulkCaptureRequest, background_tasks: BackgroundTasks):
     batch_id = str(uuid.uuid4())
     job_ids = []
     for url in req.urls:
         job_id = str(uuid.uuid4())
         jobs[job_id] = {"status": "pending", "batch_id": batch_id, "url": str(url)}
-        db.add(UsageRecord(user_id=user.id, job_id=job_id))
         background_tasks.add_task(
             _run_capture, job_id, str(url),
             req.format, req.resize_width, req.resize_height,
         )
         job_ids.append(job_id)
 
-    db.commit()
-    batches[batch_id] = {"job_ids": job_ids, "total": num_urls, "format": req.format}
+    batches[batch_id] = {"job_ids": job_ids, "total": len(req.urls), "format": req.format}
     return {"batch_id": batch_id, "job_ids": job_ids}
 
 
-@app.get("/status-bulk/{batch_id}", dependencies=[Depends(require_auth)])
+@app.get("/status-bulk/{batch_id}")
 async def get_bulk_status(batch_id: str):
     batch = batches.get(batch_id)
     if not batch:
@@ -217,7 +172,7 @@ async def get_bulk_status(batch_id: str):
     }
 
 
-@app.get("/download-bulk/{batch_id}", dependencies=[Depends(require_auth)])
+@app.get("/download-bulk/{batch_id}")
 async def download_bulk(batch_id: str):
     batch = batches.get(batch_id)
     if not batch:
@@ -242,7 +197,7 @@ async def download_bulk(batch_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Background task
+# Background task — capture
 # ---------------------------------------------------------------------------
 
 async def _run_capture(
@@ -256,9 +211,8 @@ async def _run_capture(
     if fmt == "jpeg":
         fmt = "jpg"
 
-    ext = fmt
     raw_filename = f"{job_id}_raw.png"
-    out_filename = f"{job_id}.{ext}"
+    out_filename = f"{job_id}.{fmt}"
     out_path     = str(SCREENSHOTS_DIR / out_filename)
 
     result = await capture_screenshot(url, raw_filename)
@@ -294,7 +248,7 @@ async def _run_capture(
 # Design endpoints  (screenshot → functional website)
 # ---------------------------------------------------------------------------
 
-@app.post("/design/{job_id}", dependencies=[Depends(require_auth)])
+@app.post("/design/{job_id}")
 async def start_design(job_id: str, background_tasks: BackgroundTasks):
     """Start the design agent for a completed screenshot job."""
     job = jobs.get(job_id)
@@ -318,7 +272,7 @@ async def start_design(job_id: str, background_tasks: BackgroundTasks):
     return {"design_job_id": design_job_id}
 
 
-@app.get("/design-status/{design_job_id}", dependencies=[Depends(require_auth)])
+@app.get("/design-status/{design_job_id}")
 async def get_design_status(design_job_id: str):
     dj = design_jobs.get(design_job_id)
     if not dj:
@@ -326,7 +280,7 @@ async def get_design_status(design_job_id: str):
     return dj
 
 
-@app.get("/design-download/{design_job_id}", dependencies=[Depends(require_auth)])
+@app.get("/design-download/{design_job_id}")
 async def download_design(design_job_id: str):
     dj = design_jobs.get(design_job_id)
     if not dj:
@@ -345,6 +299,10 @@ async def download_design(design_job_id: str):
         headers={"Content-Disposition": 'attachment; filename="index.html"'},
     )
 
+
+# ---------------------------------------------------------------------------
+# Background task — design
+# ---------------------------------------------------------------------------
 
 async def _run_design(design_job_id: str, screenshot_path: str) -> None:
     async def _progress(stage: str, detail: str) -> None:
