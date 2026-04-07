@@ -3,3 +3,12 @@ playwright
 Pillow
 fastapi
 uvicorn[standard]
+# Auth & sessions
+authlib
+httpx
+PyJWT
+itsdangerous
+# Database
+sqlalchemy
+# Environment
+python-dotenv

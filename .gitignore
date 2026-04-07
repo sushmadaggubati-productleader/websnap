@@ -6,6 +6,14 @@ env/
 # Screenshots output
 screenshots/
 
+# Generated website designs
+designs/
+
+# SQLite database (use a hosted DB in production)
+*.db
+*.db-shm
+*.db-wal
+
 # Python cache
 __pycache__/
 *.pyc
